@@ -14,9 +14,10 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, rm, writeFile } from "fs/promises";
 import path from "path";
 
 const LOCAL_UPLOAD_DIR = path.join(process.cwd(), ".data", "uploads");
@@ -103,4 +104,18 @@ export async function readFileBytes(key: string): Promise<Buffer> {
     return Buffer.from(await body.transformToByteArray());
   }
   return readFile(path.join(LOCAL_UPLOAD_DIR, key));
+}
+
+/** Delete a stored object — used on the rollback path when enqueueing fails. */
+export async function deleteFile(key: string): Promise<void> {
+  if (storageBackend() === "r2") {
+    await getS3Client().send(
+      new DeleteObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME!,
+        Key: key,
+      }),
+    );
+    return;
+  }
+  await rm(path.join(LOCAL_UPLOAD_DIR, key), { force: true });
 }

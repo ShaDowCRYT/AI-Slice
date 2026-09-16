@@ -53,5 +53,9 @@ export const aiConfig = {
     // free-tier rate limits for both Gemini and DeepSeek while leaving one
     // slot free to survive a stall during a retry.
     concurrency: 2,
+    // Phase-2 stand-in only: how long a fake job "processes", so the concurrency
+    // cap can be demonstrated with a dummy handler before the real Gemini call
+    // is wired in (Phase 3 replaces this handler and deletes this value).
+    fakeSleepMs: 4_000,
   },
 } as const;
