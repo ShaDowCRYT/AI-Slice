@@ -1,5 +1,9 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
+//
+// The auth models above are reused from Assessment 1 (AuthSlice); the
+// Job model below is the locked schema from Assessment 3's PRD. The two are
+// bridged by the jobs relation on User.
 
 generator client {
   provider = "prisma-client-js"
@@ -8,6 +12,32 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+model Job {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status         JobStatus @default(PENDING)
+  storageKey     String
+  mimeType       String
+  extractedData  Json?
+  followUpType   String?
+  followUpResult String?
+  attempts       Int       @default(0)
+  errorMessage   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("jobs")
 }
 
 model User {
@@ -22,6 +52,7 @@ model User {
   verificationCodes   VerificationCode[]
   passwordResetTokens PasswordResetToken[]
   sessions            Session[]
+  jobs                Job[]
 
   @@map("users")
 }
