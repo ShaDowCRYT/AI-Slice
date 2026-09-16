@@ -48,3 +48,35 @@ negative value that blew up `writeUInt32BE`. Rather than fight a
 transpiler/platform ambiguity in test plumbing, I replaced it with a local
 table-driven IEEE CRC-32 (deterministic, portable). Worth recording because it
 is the kind of silent sign quirk that only appears under a specific loader.
+
+### 4. Unreadable-photo policy decided with the user (2026-09-16)
+Live Gemini evidence: a pure-noise photo returned `{"text":"[illegible]"}`
+which is schema-valid (min length 1), so the job would have been "DONE" while
+carrying no information. The user chose the policy now implemented in
+`extractionHandler`:
+- Check for the ABSENCE of real content after stripping `[illegible]` markers,
+  NOT the mere presence of a marker. A 95%-legible note with one unreadable
+  word stays DONE (markers included, as the model returned them).
+- Only when every meaningful field (text, keyPoints, section headings/content)
+  reduces to empty/whitespace after stripping → FAILED, with a clear message:
+  "The photo couldn't be read clearly enough to extract any content — try a
+  clearer or better-lit photo."
+Rejected alternative: failing on marker presence, which would fail exactly the
+legible-with-a-gap case this product should keep.
+
+### 5. Provider-side behaviours observed live (and one Windows environment quirk)
+- Gemini `gemini-3.6-flash` (real key, 16–17 Sep 2026): extraction works and
+  respects `responseJsonSchema`. It occasionally returns transient 503
+  "high demand… try again later" (observed twice). The app already treats any
+  handler error as a FAILED row with the message stored, which is the designed
+  response to this — a retry is a fresh upload. No schema-level failure has
+  been observed on real output yet.
+- DeepSeek (real key): the request path works (reaches DeepSeek's edges, real
+  trace IDs back) but the account returns `402 Insufficient Balance` — billing
+  is the blocker for a successful follow-up result, not the code. The user will
+  top up and we re-run the follow-up evidence (tomorrow).
+- Windows environment artifact: standalone `node --import tsx` CLI scripts that
+  exit while a provider socket is still draining occasionally print
+  `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` from libuv after the
+  real error is already reported. Benign, seen only in dev test scripts that
+  `process.exit()` mid-flight; does not affect the running Next app or worker.

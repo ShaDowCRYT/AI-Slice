@@ -185,6 +185,9 @@ export const extractionHandler: JobHandler = async (ctx): Promise<JobHandlerResu
       storageKey: ctx.storageKey,
       mimeType: ctx.mimeType,
     });
+    if (!hasRealContent(data)) {
+      return { status: "failed", error: ILLEGIBLE_ONLY_MESSAGE };
+    }
     return { status: "done", data };
   } catch (err) {
     const message =
@@ -192,3 +195,30 @@ export const extractionHandler: JobHandler = async (ctx): Promise<JobHandlerResu
     return { status: "failed", error: message };
   }
 };
+
+// --- "No real content" policy (user decision, 2026-09-16) -------------------
+//
+// A result where every meaningful field reduces to nothing real after the
+// [illegible] markers are stripped is a FAILED extraction, not a DONE one.
+// Alternative considered and rejected: failing on the mere PRESENCE of a marker
+// would wrongly fail the common, useful case of a mostly-legible note with one
+// unreadable word. Only all-content-gone triggers FAILED; markers stay in any
+// content that otherwise survived, exactly as the model returned them.
+
+export const ILLEGIBLE_ONLY_MESSAGE =
+  "The photo couldn't be read clearly enough to extract any content — try a clearer or better-lit photo.";
+
+const ILLEGIBLE_MARKER_RE = /\[illegible\]/gi;
+
+function hasRealContent(result: ExtractionResult): boolean {
+  const hasRealText = (s: string) =>
+    s.replace(ILLEGIBLE_MARKER_RE, "").trim().length > 0;
+
+  if (hasRealText(result.text)) return true;
+  if (result.keyPoints?.some((k) => hasRealText(k))) return true;
+  return (
+    result.sections?.some(
+      (s) => hasRealText(s.heading) || hasRealText(s.content),
+    ) ?? false
+  );
+}

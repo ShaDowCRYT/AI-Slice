@@ -9,7 +9,11 @@
 //
 // Requires real GEMINI_API_KEY and DEEPSEEK_API_KEY in .env.
 
-import { extractFromImage } from "../lib/ai/extract";
+import {
+  extractionHandler,
+  extractFromImage,
+  ILLEGIBLE_ONLY_MESSAGE,
+} from "../lib/ai/extract";
 import { refineNotes } from "../lib/ai/followup";
 import { extractionResultSchema } from "../lib/schemas/extraction-result";
 import { storageBackend, uploadFile } from "../lib/storage/r2";
@@ -46,15 +50,27 @@ async function main() {
   console.log("\n=== 2. BROKEN CASE (pure-noise photo, real Gemini call) ===");
   try {
     const noiseRaw: string[] = [];
-    const unexpected = await extractFromImage(
+    const rawValidated = await extractFromImage(
       { storageKey: brokenKey, mimeType: mime },
       { onRawOutput: (t) => noiseRaw.push(t) },
     );
-    console.log("UNEXPECTED: the gate accepted noise output:");
-    console.log(JSON.stringify({ raw: noiseRaw[noiseRaw.length - 1], validated: unexpected }, null, 2));
+    console.log("Gemini still returns schema-valid text for pure noise:");
+    console.log(JSON.stringify({ raw: noiseRaw[noiseRaw.length - 1], validated: rawValidated }));
+    // The policy kicks in at the handler: real content after stripping the
+    // markers? None → FAILED, even though the schema-validated output passed.
+    const handled = await extractionHandler({
+      jobId: "broken-demo",
+      userId: "verify-providers",
+      storageKey: brokenKey,
+      mimeType: mime,
+    });
+    console.log(
+      handled.status === "failed" && handled.error === ILLEGIBLE_ONLY_MESSAGE
+        ? `Handler decision: FAILED with "${ILLEGIBLE_ONLY_MESSAGE}"`
+        : `Handler decision (unexpected): ${JSON.stringify(handled)}`,
+    );
   } catch (err) {
-    console.log("Rejected as expected:");
-    console.log(err instanceof Error ? err.message : String(err));
+    console.log("Rejected earlier than expected:", err instanceof Error ? err.message : String(err));
   }
 
   // ---- 3. Real DeepSeek follow-up on the validated extraction ----------
