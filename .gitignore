@@ -48,3 +48,5 @@ yarn-error.log*
 next-env.d.ts
 dev-server.log
 dev-server.err.log
+worker.log
+worker.err.log

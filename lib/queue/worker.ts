@@ -3,15 +3,15 @@
 // read from lib/ai/config.ts — never a magic number in this file.
 //
 // The unit of work is generic: a ctx describing one Job row plus a handler.
-// Phase 2 ships a fake sleep handler (proving the cap before any provider call
-// exists); Phase 3 swaps in the real Gemini extraction handler with no change
-// to the queue mechanics around it.
+// The default handler is the real Gemini extraction (lib/ai/extract.ts); the
+// queue mechanics around it stay untouched.
 
 import type { Job, Worker } from "bullmq";
 import { Worker as BullWorker } from "bullmq";
 import type { Prisma } from "@prisma/client";
 
 import { aiConfig } from "../ai/config";
+import { extractionHandler } from "../ai/extract";
 import { prisma } from "../prisma";
 import { JOB_QUEUE_NAME } from "./queue";
 
@@ -30,17 +30,10 @@ export type JobHandler = (ctx: JobContext) => Promise<JobHandlerResult>;
 
 const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 
-// Phase-2 handler: stands in for the real Gemini extract so the concurrency
-// cap can be demonstrated end-to-end before any provider integration exists.
-const fakeExtractionHandler: JobHandler = async () => {
-  await new Promise((resolve) => setTimeout(resolve, aiConfig.queue.fakeSleepMs));
-  return { status: "done", data: { fake: true } };
-};
-
 // The active handler is module-scoped, not per-job: one worker, one handler.
 // Swapped by startWorker() — changes only what "the work" is, never the queue
 // mechanics or the concurrency cap.
-let currentHandler: JobHandler = fakeExtractionHandler;
+let currentHandler: JobHandler = extractionHandler;
 
 async function processJob(job: Job): Promise<void> {
   const { jobId } = job.data as { jobId: string };
@@ -95,10 +88,9 @@ let activeWorker: Worker | null = null;
 
 /**
  * Create (or reuse) the shared worker with the configured concurrency cap.
- * startWorker(fakeExtractionHandler) is the Phase-2 default; Phase 3 passes
- * the real Gemini extraction handler.
+ * Defaults to the real Gemini extraction handler.
  */
-export function startWorker(handler: JobHandler = fakeExtractionHandler): Worker {
+export function startWorker(handler: JobHandler = extractionHandler): Worker {
   if (activeWorker) return activeWorker;
 
   currentHandler = handler;

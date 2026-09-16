@@ -21,6 +21,12 @@ import { prisma } from "../lib/prisma";
 
 const JOBS_TO_ENQUEUE = 6;
 
+// Standalone evidence tool, not app code: the dummy handler's own sleep is a
+// local constant here, deliberately NOT in lib/ai/config.ts (which holds only
+// production values — the phase-2 fakeSleepMs was removed when the real Gemini
+// handler landed).
+const DUMMY_SLEEP_MS = 4_000;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -67,7 +73,7 @@ async function main() {
     timeline.push(`++ ${ctx.jobId.slice(-6)} active=${active} max=${maxActive} @${Date.now()}`);
     console.log(timeline[timeline.length - 1]);
 
-    await sleep(aiConfig.queue.fakeSleepMs);
+    await sleep(DUMMY_SLEEP_MS);
 
     active -= 1;
     timeline.push(`-- ${ctx.jobId.slice(-6)} active=${active} @${Date.now()}`);
@@ -95,7 +101,7 @@ async function main() {
   console.log(`configured concurrency cap : ${cap}`);
   console.log(`maximum simultaneously active : ${maxActive}`);
   console.log(`wall clock for ${JOBS_TO_ENQUEUE} jobs : ${wallMs}ms`);
-  console.log(`expected minimum with cap ${cap}: approx ${Math.ceil(JOBS_TO_ENQUEUE / cap) * aiConfig.queue.fakeSleepMs}ms`);
+  console.log(`expected minimum with cap ${cap}: approx ${Math.ceil(JOBS_TO_ENQUEUE / cap) * DUMMY_SLEEP_MS}ms`);
   console.log("-----------------------------------------------------");
 
   if (maxActive > cap) {

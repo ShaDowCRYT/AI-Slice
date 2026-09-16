@@ -33,6 +33,9 @@ export const aiConfig = {
     // 0.4 — low but not zero: the follow-up should stay faithful to the
     // source, while a touch of variance avoids wooden, verbatim repetition.
     temperature: 0.4,
+    // Same discipline as extraction: re-run once if the reply fails the Zod
+    // check, so one malformed JSON frame doesn't doom an otherwise good job.
+    validationRetries: 1,
   },
   extraction: {
     // Re-run the extract once if the first response fails schema validation;
@@ -53,9 +56,5 @@ export const aiConfig = {
     // free-tier rate limits for both Gemini and DeepSeek while leaving one
     // slot free to survive a stall during a retry.
     concurrency: 2,
-    // Phase-2 stand-in only: how long a fake job "processes", so the concurrency
-    // cap can be demonstrated with a dummy handler before the real Gemini call
-    // is wired in (Phase 3 replaces this handler and deletes this value).
-    fakeSleepMs: 4_000,
   },
 } as const;

@@ -144,6 +144,94 @@ function ResultView({ job }: { job: JobViewData }) {
           ))}
         </section>
       )}
+
+      <FollowUpSection jobId={job.id} initial={job} />
     </article>
+  );
+}
+
+function FollowUpSection({ jobId, initial }: { jobId: string; initial: JobViewData }) {
+  const [result, setResult] = useState<string | null>(initial.followUpResult);
+  const [applied, setApplied] = useState<"summarise" | "rephrase" | "expand" | null>(
+    (initial.followUpType as "summarise" | "rephrase" | "expand" | null) ?? null,
+  );
+  const [pending, setPending] = useState<null | "summarise" | "rephrase" | "expand">(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const ACTIONS: Array<{ id: "summarise" | "rephrase" | "expand"; label: string }> = [
+    { id: "summarise", label: "Summarise" },
+    { id: "rephrase", label: "Rephrase" },
+    { id: "expand", label: "Expand" },
+  ];
+
+  const refine = async (action: "summarise" | "rephrase" | "expand") => {
+    setPending(action);
+    setError(null);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/follow-up`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const body = (await res.json()) as { followUpResult?: string; followUpType?: string; error?: string };
+      if (!res.ok) {
+        setError(body.error ?? "The refinement failed. Try again.");
+        return;
+      }
+      setResult(body.followUpResult ?? null);
+      setApplied((body.followUpType as typeof applied) ?? action);
+    } catch {
+      setError("The refinement failed. Try again.");
+    } finally {
+      setPending(null);
+    }
+  };
+
+  return (
+    <section className="mt-8 border-t border-border pt-6" aria-labelledby="follow-up-heading">
+      <h2 id="follow-up-heading" className="text-sm font-semibold">
+        Refine with AI
+      </h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        One follow-up on the extracted text. Choosing another action replaces the
+        previous result.
+      </p>
+
+      {applied && result ? (
+        <div className="mt-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-primary">
+            {applied} result
+          </p>
+          <div className="mt-2 rounded-md border border-border bg-background p-4 text-sm leading-relaxed">
+            {result}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {ACTIONS.map(({ id, label }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => refine(id)}
+            disabled={pending !== null}
+            aria-busy={pending === id}
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {pending === id
+              ? "Working…"
+              : applied === id
+                ? `${label} (applied)`
+                : label}
+          </button>
+        ))}
+      </div>
+
+      {error && (
+        <p className="mt-3 text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
