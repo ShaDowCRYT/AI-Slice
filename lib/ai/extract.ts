@@ -88,10 +88,10 @@ export function parseExtractionOutput(raw: unknown): ExtractionResult {
   return parsed.data;
 }
 
-async function requestExtraction(input: {
-  storageKey: string;
-  mimeType: string;
-}): Promise<ExtractionResult> {
+async function requestExtraction(
+  input: { storageKey: string; mimeType: string },
+  onRawOutput?: (rawText: string) => void,
+): Promise<ExtractionResult> {
   const imageBytes = await readFileBytes(input.storageKey);
   const base64 = imageBytes.toString("base64");
 
@@ -136,6 +136,10 @@ async function requestExtraction(input: {
     throw new ExtractionValidationError("Gemini output was not valid JSON.");
   }
 
+  // Evidence hook only: the STOP-3 report shows the raw model reply next to the
+  // validated result, proving the gate operated on real provider output.
+  onRawOutput?.(text);
+
   return parseExtractionOutput(raw);
 }
 
@@ -144,16 +148,16 @@ async function requestExtraction(input: {
  * aiConfig.extraction.validationRetries times after a schema-validation failure,
  * then surfaces the final failure instead of looping forever on bad output.
  */
-export async function extractFromImage(input: {
-  storageKey: string;
-  mimeType: string;
-}): Promise<ExtractionResult> {
+export async function extractFromImage(
+  input: { storageKey: string; mimeType: string },
+  options?: { onRawOutput?: (rawText: string) => void },
+): Promise<ExtractionResult> {
   const attempts = aiConfig.extraction.validationRetries + 1;
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      return await requestExtraction(input);
+      return await requestExtraction(input, options?.onRawOutput);
     } catch (err) {
       lastError = err;
       const retryable =

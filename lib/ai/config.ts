@@ -4,10 +4,11 @@
 
 export const aiConfig = {
   gemini: {
-    // gemini-2.5-flash is vision-capable and supports responseSchema
-    // structured output; the flash tier is the cheapest model that reliably
-    // transcribes handwritten text.
-    model: "gemini-2.5-flash" as const,
+    // gemini-3.6-flash is the current vision-capable flash tier (verified live
+    // 2026-09-16; gemini-2.5-flash — the PRD's assumed model — now returns 404
+    // "no longer available to new users". See problems.md). Supports
+    // responseJsonSchema structured output and reliably reads handwriting.
+    model: "gemini-3.6-flash" as const,
     // 30s ceiling on one extract call: generous for a photo job, but a hung
     // provider call longer than this is treated as a failure, not something
     // the job waits on forever.

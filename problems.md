@@ -25,3 +25,26 @@ natively anymore, so the cheapest faithful option is a maintained, version-pinne
 converter invoked from the locked schema. If Google ships `zodResponseSchema`
 again in a later 2.x, switch to it and delete the converter call — the Zod schema
 file does not change either way.
+
+### 2. `gemini-2.5-flash` is gone for new users (verified live)
+PRD assumed `gemini-2.5-flash`. The real API rejects it with
+`404 NOT_FOUND: "This model models/gemini-2.5-flash is no longer available to
+new users... use models/gemini-3.6-flash"`.
+
+**Chosen against it:** leaving the PRD dead-model in place (every real call 404s)
+and switching to the Interactions API the error suggests (an unrelated API
+surface; generateContent with a valid model is the documented core path and
+keeps the whole slice on one call pattern).
+
+**Chosen:** `aiConfig.gemini.model = "gemini-3.6-flash"`, approved by the user,
+with a reasoned comment at the point of definition. The 2.5-flash name is on
+record here rather than erased; if the assessment brief insists on 2.5-flash
+screenshots, they are impossible to produce with a new API key.
+
+### 3. Transpiled `crc32` from `node:zlib` passed a signed int32 under tsx
+The evidence PNG encoder initially used `node:zlib`'s `crc32`. A direct node
+check returned an unsigned number, but the same call under `tsx` produced a
+negative value that blew up `writeUInt32BE`. Rather than fight a
+transpiler/platform ambiguity in test plumbing, I replaced it with a local
+table-driven IEEE CRC-32 (deterministic, portable). Worth recording because it
+is the kind of silent sign quirk that only appears under a specific loader.
