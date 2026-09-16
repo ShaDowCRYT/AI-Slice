@@ -40,6 +40,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local-dev storage backing (worker uploads)
+/.data/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
