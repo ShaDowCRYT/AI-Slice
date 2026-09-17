@@ -16,6 +16,9 @@ import {
   GetObjectCommand,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
+import { lookup } from "node:dns";
+import https from "node:https";
 import { randomUUID } from "crypto";
 import { mkdir, readFile, rm, writeFile } from "fs/promises";
 import path from "path";
@@ -43,8 +46,22 @@ let s3: S3Client | null = null;
 
 function getS3Client(): S3Client {
   if (!s3) {
+    // forcePathStyle: R2's S3-compatible endpoint is path-style only.
+    // Without it the AWS SDK defaults to virtual-hosted addressing and won't
+    // resolve the bucket-prefixed hostname (R2 returns ENOTFOUND), verified
+    // live with a real R2 account.
+    // Explicit lookup: Node's internal net-level getaddrinfo call for this
+    // hostname returned ENOTFOUND on this machine (isolated against a plain
+    // https.request to the same host resolving fine within the same process).
+    // Pinning an agent whose lookup goes through node:dns.lookup fixed it.
+    // NodeHttpHandler is pinned explicitly as the transport.
     s3 = new S3Client({
       region: "auto",
+      forcePathStyle: true,
+      requestHandler: new NodeHttpHandler({
+        connectionTimeout: 10000,
+        httpsAgent: new https.Agent({ lookup }),
+      }),
       endpoint: process.env.R2_ENDPOINT,
       credentials: {
         accessKeyId: process.env.R2_ACCESS_KEY_ID!,
