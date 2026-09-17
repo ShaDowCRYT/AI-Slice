@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// Lightweight cookie check for /dashboard, /upload, and /jobs protection.
+// Lightweight cookie check for /upload and /jobs protection.
 // Runs on Edge runtime where Prisma is not available.
 // Full session validation happens server-side in the page component.
 // An expired or missing session cookie redirects to /signin.
@@ -17,5 +17,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/upload/:path*", "/jobs/:path*"],
+  matcher: ["/upload/:path*", "/jobs/:path*"],
 };

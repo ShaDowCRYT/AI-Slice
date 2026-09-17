@@ -87,7 +87,7 @@ export default function SignUpPage() {
 
   useEffect(() => {
     if (verifyForm.success) {
-      router.push("/dashboard");
+      router.push("/upload");
     }
   }, [verifyForm.success, router]);
 

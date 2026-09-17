@@ -22,7 +22,7 @@ export default function SignInPage() {
     }
     const ok = await submit(formData);
     if (ok) {
-      router.push("/dashboard");
+      router.push("/upload");
     }
   }
 
