@@ -88,13 +88,19 @@ let activeWorker: Worker | null = null;
 
 /**
  * Create (or reuse) the shared worker with the configured concurrency cap.
- * Defaults to the real Gemini extraction handler.
+ * Defaults to the real Gemini extraction handler on the production queue.
+ * The optional queueName lets evidence tools (verify-concurrency.ts) run on
+ * an isolated queue so a live production worker can never consume their jobs
+ * — production callers use the default, so behaviour here is unchanged.
  */
-export function startWorker(handler: JobHandler = extractionHandler): Worker {
+export function startWorker(
+  handler: JobHandler = extractionHandler,
+  queueName: string = JOB_QUEUE_NAME,
+): Worker {
   if (activeWorker) return activeWorker;
 
   currentHandler = handler;
-  activeWorker = new BullWorker(JOB_QUEUE_NAME, (job) => processJob(job), {
+  activeWorker = new BullWorker(queueName, (job) => processJob(job), {
     connection: { url: redisUrl },
     concurrency: aiConfig.queue.concurrency,
   });
@@ -104,7 +110,7 @@ export function startWorker(handler: JobHandler = extractionHandler): Worker {
   });
 
   console.log(
-    `[worker] started, concurrency=${aiConfig.queue.concurrency} (from lib/ai/config.ts)`,
+    `[worker] started on "${queueName}", concurrency=${aiConfig.queue.concurrency} (from lib/ai/config.ts)`,
   );
   return activeWorker;
 }
