@@ -9,10 +9,12 @@ export const aiConfig = {
     // "no longer available to new users". See problems.md). Supports
     // responseJsonSchema structured output and reliably reads handwriting.
     model: "gemini-3.6-flash" as const,
-    // 30s ceiling on one extract call: generous for a photo job, but a hung
-    // provider call longer than this is treated as a failure, not something
-    // the job waits on forever.
-    timeoutMs: 30_000,
+    // 60s ceiling on one extract call: measured real-world latency for a single
+    // photo is 6–21s and occasionally spikes above 30s (raised 2026-09-17 after
+    // a real job hit the old 30s cap on a legitimate slow run; see problems.md
+    // §7). A genuinely hung call longer than this is still treated as a
+    // failure, not something the job waits on forever.
+    timeoutMs: 60_000,
     // 4096 output tokens caps the extracted text of a full page of notes
     // without truncating a realistic page; larger inputs are out of scope.
     maxOutputTokens: 4096,
