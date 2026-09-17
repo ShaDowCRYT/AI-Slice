@@ -154,3 +154,77 @@ in `lib/ai/extract.ts`). A background job can afford to wait 60s for a
 correct answer; it cannot afford to double-spend. If Gemini latency keeps
 climbing past 60s, that is a provider-capacity problem worth flagging, not a
 timeout knob worth turning again.
+
+### 9. Post-review verification: timeout held on a real hang; quota & queue-sharing flakes (2026-09-17)
+
+Three findings from the final evidence pass:
+
+**9a. The 60s timeout mechanism is confirmed against a real, unstaged hang — no bug.**
+Job `cmu5bessi0002qeq099c0g7ko` (a real upload, real photo) resolved `FAILED` at
+**61,036 ms** after creation — created `09:16:17.346Z`, updated `09:17:18.382Z`
+— with `errorMessage: "Gemini extraction timed out after 60000ms"` and
+`attempts: 1`. It did **not** stay PROCESSING: the `withTimeout` race
+(`lib/ai/extract.ts:57`) rejected, the worker catch path wrote FAILED+message
+(`lib/queue/worker.ts:73`). The three 503 rows from the same morning
+(`cmu5b7qz8…`, `cmu5b8hr2…`, `cmu5bh6s7…`) also resolved FAILED storing the raw
+`503 UNAVAILABLE` payload. Evidence captured in DOCUMENTATION.md §6.2.
+
+**9b. Gemini free-tier daily quota is a real wall (observed during final pass).**
+`scripts/verify-providers.ts` step 1 (extraction) and step 3 (DeepSeek
+follow-up) passed clean on real keys, and the raw-vs-validated gate printed
+PASS. Step 2 (pure-noise photo) was rejected *upstream* by
+`429 RESOURCE_EXHAUSTED` — the free-tier per-model daily cap
+(`generate_content_free_tier_requests`, limit 20/day) is exhausted by repeated
+evidence runs on one key. The semantic-check invariant is unaffected: it is
+already proven by earlier real `[illegible]` rows (`cmu4prlac…`, `cmu5b7kic…`,
+`cmu5bbdjt…`, `cmu5bil11…`). Not a code issue; the key is free-tier and the
+limit is per-day.
+
+**9c. `verify-concurrency.ts` is only valid when its worker owns the queue alone.**
+Two of its runs (09:40 and my 10:17 re-run) split the 6 dummy jobs with a
+second consumer on the same `note-extraction` queue: the inline tracking handler
+saw only ~2 (DONE, 4 s sleep each), and the other 4 went to a live real-handler
+worker, failing fast on R2 with "The specified key does not exist." The script
+then times out waiting for all six.
+
+**Post-review: this was re-earned, not trusted as-is.** The previously-captured
+09:42 clean run (12.2 s, max 2, exit 0) cannot be proven isolated retroactively:
+no historical process list survives, and the runs immediately either side of it
+(09:40 split, 10:17 split) had a live worker on the queue. It may well have been
+clean *by luck* (the worker down at that exact moment), which is not a
+reproducible guarantee. So it was superseded rather than kept.
+
+**Hardening applied (`scripts/verify-concurrency.ts`):** the test now runs on a
+per-run, dedicated queue name (`note-extraction-concurrency-<timestamp>`), so a
+live production worker structurally cannot pick up its jobs. `startWorker`
+gained an optional queue-name parameter in `lib/queue/worker.ts` (default =
+production queue; production callers unchanged). The script also reports
+`Queue#getWorkers()` (Redis `CLIENT LIST`) on the production queue, so a proof
+run shows the live worker count while running.
+
+**Chosen against — option (a), detecting a live consumer and refusing to run:**
+refusing is a TOCTOU race (a worker can attach *during* the run, so it cannot
+guarantee the isolation it claims) and its only evidence is a refusal message.
+Isolating the queue makes contamination structurally impossible and yields a
+pass-with-worker-attached as proof. Worth recording because "check first, then
+run" sounds sufficient and is not.
+
+**Re-earned evidence (2026-09-17, with the production worker deliberately left
+running and detected live during the run):** 6 jobs on the isolated queue, max
+in-flight = 2 (cap), wall clock 12,160 ms, exit 0 — `live worker(s) on
+production queue "note-extraction": 1`, and all 6 dummy jobs still completed in
+clean 4 s/8 s/12 s pairs. This is now the final evidence in DOCUMENTATION.md §6,
+replacing the unprovable 09:42 run.
+
+**9d. Rate-limit evidence must control the client IP explicitly (2026-09-17).**
+`getClientIp()` (`lib/rate-limit.ts`) resolves `x-forwarded-for` first, then
+`x-real-ip`, then falls back to `"unknown"`. Direct localhost requests carry no
+forwarding header, so every local client collapses into one `"unknown"` bucket
+per route — which is correct for a single-machine dev setup but makes live
+evidence non-deterministic if earlier manual testing already filled a bucket.
+`scripts/verify-rate-limits.ts` therefore sends a fresh TEST-NET-3 address in
+`X-Forwarded-For` per bucket so each run starts empty and is reproducible. In a
+real deployment the IP is set by the load balancer/proxy and this is a non-issue;
+the script's behaviour just mirrors production keying. Noted here because
+"the limiter is wired in" looked trivially true and the live evidence still
+needed a deterministic harness.

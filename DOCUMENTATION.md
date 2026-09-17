@@ -222,6 +222,17 @@ rate limits bound bursts per user; timeouts and validation retries (≤1) bound
 wasted call time; and the token caps bound per-call size. There is no unbounded
 loop anywhere that can spend without a bounded number of provider calls.
 
+The provider's own free-tier ceilings are a real, observed outer bound while the
+keys are unpaid: Gemini's free tier allows **20 `generate_content` requests per
+day per project per model** (`generate_content_free_tier_requests`), observed
+live as `429 RESOURCE_EXHAUSTED` on 2026-09-17 when a final evidence pass ran a
+handful of extra calls (problems.md §9b). That quota is a hard daily ceiling on
+total spend from this slice — the app's concurrency/rate/timeout caps limit
+*burst and waste*, the free-tier quota is what can stop the day's entire output
+dead, and it resets per day. DeepSeek has no equivalent free tier to depend on;
+its bound is the account balance (its `402 Insufficient Balance` history is in
+problems.md §5).
+
 ## 6. Required evidence
 
 Evidence is produced by real, un-mocked scripts under `scripts/` and real
@@ -230,11 +241,13 @@ provider calls. Run any with `node --env-file=.env --import tsx scripts/<name>.t
 | Required item | Where it's demonstrated |
 |---|---|
 | Jobs table: one success + one failure, message visible | `scripts/dump-jobs.ts`; real rows include `cmu4op0t8…` DONE (dur 5847 ms) and `cmu5bbdjt…` FAILED "The photo couldn't be read clearly enough…" (and `cmu5aa8vn…` FAILED on the 30 s timeout that prompted `problems.md` §7) |
+| Requirement #10: provider timeout → defined fallback, on a real unstaged outage | `cmu5bessi0002qeq099c0g7ko` — FAILED at **61,036 ms** (60 s config timeout + ~1 s queue/DB overhead) with `"Gemini extraction timed out after 60000ms"` stored (full row in §6.2). Not a contrived test: Gemini genuinely hung past the new 60 s cap on a real photo on the morning evidence run, and the `withTimeout` wrapper (`lib/ai/extract.ts`) resolved the job cleanly instead of leaving it PROCESSING. The same run also produced three real 503 rows (`cmu5b7qz8…`, `cmu5b8hr2…`, `cmu5bh6s7…`) whose FAILED rows store the provider's raw `503 UNAVAILABLE` payload — the designed fallback path, exercised by a genuine outage |
 | Raw model output alongside validated result | `scripts/verify-providers.ts` prints the raw Gemini reply next to the Zod-validated result, and re-parses the raw reply against the schema. When Gemini is flapping (transient 503s, §7), the same chain is proven by `scripts/evidence-illegible-policy.ts`, which shows the raw `[illegible]` reply becoming a FAILED row |
 | Validation deliberately failing | `scripts/check-validation.ts` (5 malformed extraction + 4 malformed follow-up outputs rejected) plus the live noise-photo cases above — schema-compliant-but-empty is caught by the semantic check (§5.5) |
-| Concurrency cap holding | `scripts/verify-concurrency.ts` — 6 jobs enqueued, max in-flight = 2 (configured cap), wall clock 12.2 s, exit 0 |
+| Concurrency cap holding | `scripts/verify-concurrency.ts` — now hardens itself (problems.md §9c): runs on a per-run isolated queue, so a live production worker cannot contaminate it. Re-earned 2026-09-17 **with the production worker deliberately left running, and detected live during the run** (`live worker(s) on production queue "note-extraction": 1`): 6 jobs enqueued, max in-flight = **2** (configured cap), wall clock **12,160 ms**, exit 0 |
 | Database holds only a storage key, not the file | `Job.storageKey` in every row (see dump); actual bytes only in R2 (or `.data/uploads/` in dev), never in Postgres — see §5.9 |
 | Follow-up refinement via DeepSeek (summarise/rephrase/expand) | Real funded calls 2026-09-17 via `lib/ai/followup.ts`. e.g. on "MATH NOTES / 2X + 3 = 7 / X = 2": `summarise` → "Solve 2X + 3 = 7, giving X = 2."; `expand` → the full step-by-step solution (see §6.1) |
+| Requirement #8: per-IP rate limits on BOTH cost-driving endpoints, live | `scripts/verify-rate-limits.ts` — real HTTP against the running app. Upload trips at **request 11** (> limit 10/60s) → `429` `{"error":"Too many attempts. Try again in 60 seconds."}` `Retry-After: 60`; follow-up trips at **request 6** (> limit 5/60s) → same 429 shape. Both buckets proven route-scoped/independent (§6.3) |
 
 ### 6.1 DeepSeek follow-up, real output (2026-09-17)
 
@@ -247,6 +260,91 @@ expand    → { "result": "MATH NOTES\n\nSolve the linear equation for X:\n\n2X 
 
 Both completed in ~1.2 s, well inside the 45 s config timeout, and both re-validated
 against the follow-up Zod schema before display.
+
+### 6.2 Real unstaged provider outage → timeout fallback evidence (2026-09-17)
+
+During the morning evidence run, Gemini genuinely hung past the (then-new) 60 s cap
+on a real photo and returned `503 high demand` three times — no contrived test, no
+staged failure. The full `dump-jobs.ts` rows, verbatim:
+
+```
+id           : cmu5bessi0002qeq099c0g7ko      ← the 60 s hang
+status       : FAILED
+attempts     : 1
+errorMessage : Gemini extraction timed out after 60000ms
+storageKey   : uploads/cmu5berh50000qeq00usi74pg/7fe414b6-93a6-4bae-9f0b-a8c45681c9e7.png
+createdAt    : 2026-09-17T09:16:17.346Z
+updatedAt    : 2026-09-17T09:17:18.382Z       ← 61,036 ms later: FAILED, not stuck PROCESSING
+
+id           : cmu5aa8vn0004qei0yiuam2yc      ← the same mechanism, on the old 30 s cap
+status       : FAILED
+errorMessage : Gemini extraction timed out after 30000ms
+createdAt    : 2026-09-17T08:44:45.299Z
+updatedAt    : 2026-09-17T08:45:16.228Z       ← 30,929 ms later
+
+id           : cmu5b7qz80005qe8sx8gw9w8b      ← real 503 high-demand (one of three)
+status       : FAILED
+errorMessage : {"error":{"code":503,"message":"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.","status":"UNAVAILABLE"}}
+createdAt    : 2026-09-17T09:10:48.404Z
+updatedAt    : 2026-09-17T09:10:52.582Z       ← FAILED on the provider error, message stored
+```
+
+Why this resolves cleanly: the provider call is raced against a timer at
+`lib/ai/extract.ts:57` (`withTimeout`), configured from `aiConfig.gemini.timeoutMs`
+— never a literal in the handler. When the race loses, the worker's catch path
+writes `FAILED` + `errorMessage` (`lib/queue/worker.ts:73`), so a hung provider
+call can never leave a row in PROCESSING. Same wrapper guards the DeepSeek
+follow-up at `lib/ai/followup.ts:73`. The 503 cases resolve through the identical
+path with the raw provider payload stored, which is the honest, user-visible
+handling Requirement #10 asks for.
+
+### 6.3 Rate limiting, real HTTP evidence — both buckets (2026-09-17)
+
+Config (`lib/ai/config.ts.rateLimits`, per-IP sliding window of 60 s): upload
+trigger **10/60 s** (`api-jobs-upload`), follow-up **5/60 s** (`api-jobs-follow-up`).
+Verified live by `scripts/verify-rate-limits.ts` against the running app, with a
+fresh TEST-NET-3 client IP per bucket so each starts empty. The gate runs before
+auth by design, so requests that pass it and lack a session legitimately count
+toward the bucket (401) — this is what stops unauthenticated abuse; storage and
+enqueuing are only reached after auth, so no files were stored or jobs enqueued
+by the upload trips.
+
+```
+=== PART 1: POST /api/jobs (upload trigger, limit 10/60s) ===
+request  1..10: HTTP 401  {"error":"Sign in to upload notes."}   ← gate passed, no session
+request    11: HTTP 429 Retry-After 60  ← GATE TRIPPED  {"error":"Too many attempts. Try again in 60 seconds."}
+
+UPLOAD TRIP — the response on the request over the limit
+HTTP status : 429
+Retry-After : 60
+body        : {"error":"Too many attempts. Try again in 60 seconds."}
+
+=== PART 2: POST /api/jobs/[id]/follow-up (limit 5/60s) ===
+request  1..5: HTTP 200  {"followUpType":"summarise","followUpResult":"…"}   ← real job, dedup path
+request    6: HTTP 429 Retry-After 60  ← GATE TRIPPED  {"error":"Too many attempts. Try again in 60 seconds."}
+
+FOLLOW-UP TRIP — the response on the request over the limit
+HTTP status : 429
+Retry-After : 60
+body        : {"error":"Too many attempts. Try again in 60 seconds."}
+```
+
+Independence (buckets are keyed per-route, `{ip}:{route}` in `lib/rate-limit.ts`):
+
+```
+INDEPENDENCE A — upload bucket FULL on 203.0.113.51, follow-up on the SAME IP:
+   HTTP 201 {"followUpType":"summarise",…}   ← succeeds; a shared bucket would 429 (10 ≥ 5)
+
+INDEPENDENCE B — follow-up bucket FULL on 203.0.113.52, uploads on the SAME IP:
+   upload requests 1..10: HTTP 401 (gate passed)   ← fresh upload bucket despite 5 follow-up hits
+   upload request    11: HTTP 429                  ← trips at #11, not #6 as a shared bucket would
+```
+
+The follow-up test made exactly **one** real DeepSeek call: the first request
+applied `summarise` (201), and the route's stored-result dedup answered the
+rest (200) — the gate counted every request regardless. Both endpoints resolve
+429 with the identical, user-visible body and a `Retry-After` equal to the
+remaining window (60 s).
 
 ## 7. Honest disclosures
 
