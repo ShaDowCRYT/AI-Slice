@@ -64,6 +64,18 @@ carrying no information. The user chose the policy now implemented in
 Rejected alternative: failing on marker presence, which would fail exactly the
 legible-with-a-gap case this product should keep.
 
+The reasoning that justifies this as a second, *semantic* check (not a stricter
+schema): a DONE job with no real content is the same "200 doesn't mean success"
+problem the brief warns about, one layer up. The pipeline can complete without
+erroring — worker ran, provider replied, schema passed — while the job has
+produced nothing useful. `DONE` is only a meaningful signal if it means "the
+job did useful work", not merely "nothing crashed". Zod validates shape
+(structural); `hasRealContent` validates that actual meaning survived (semantic).
+The two run in that order, and the semantic check deliberately does NOT trigger
+the schema-validation retry: a wholly-illegible photo is a well-formed answer
+to the wrong question (nothing to transcribe), so re-asking the model costs
+spend without ever fixing the input.
+
 ### 5. Provider-side behaviours observed live (and one Windows environment quirk)
 - Gemini `gemini-3.6-flash` (real key, 16–17 Sep 2026): extraction works and
   respects `responseJsonSchema`. It occasionally returns transient 503
@@ -80,3 +92,65 @@ legible-with-a-gap case this product should keep.
   `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` from libuv after the
   real error is already reported. Benign, seen only in dev test scripts that
   `process.exit()` mid-flight; does not affect the running Next app or worker.
+
+### 6. Going live against real Cloudflare R2 (verified 2026-09-17)
+Real `R2_*` values in `.env` flipped the storage backend to R2, and three real
+failures surfaced before the round-trip passed:
+- **Virtual-hosted vs path-style addressing.** The AWS SDK defaulted to
+  virtual-hosted URLs, making the SDK request `bucket.<account>.r2...`, which
+  R2 does not serve (ENOTFOUND). Fixed with `forcePathStyle: true`. This is an
+  SDK default mismatch, not a config error.
+- **`R2_ENDPOINT` shape.** The first endpoint the user entered contained the
+  bucket as a host prefix (`https://ai-slice.<account>.r2.cloudflarestorage.com`).
+  The R2 S3 endpoint is `<account>.r2.cloudflarestorage.com` only; the SDK
+  receives the bucket separately (`R2_BUCKET_NAME`).
+- **Machine-local DNS quirk (root cause not fully pinned).** After the endpoint
+  was corrected, `PutObject` still failed with `getaddrinfo ENOTFOUND` for the
+  account hostname, even though `nslookup`/PowerShell and a plain
+  `https.request` to the same host from the same Node process resolved it fine.
+  Intercepting every socket `lookup` and routing it through `node:dns.lookup`
+  made the identical request succeed, so `r2.ts` now pins an `https.Agent`
+  whose `lookup` does exactly that. Honest status: the evidence points at the
+  internal net-level `getaddrinfo({all:true})` call failing on this machine for
+  this host, but I could not get a repro from the public `dns` API — the fix is
+  verified, the mechanism is only inferred, not proven.
+
+**Chosen against it:** doing nothing once `forcePathStyle` "didn't help" (both
+failures were real and both had to be fixed for R2 bytes to round-trip), and
+patching `net` monkey-patch-wide (the agent-level `lookup` scopes the change to
+exactly the R2 client).
+
+### 8. DeepSeek billing unblocked; the day's live-provider flap (2026-09-17)
+The follow-up path stopped being 402-blocked: the user funded the account and
+real `summarise`/`expand` calls succeeded in ~1.2 s each (recorded in
+DOCUMENTATION.md §6.1). §5 stands as the historical record of the blockage.
+
+The same day, Gemini repeatedly returned `503 high demand` and once hung past
+the (new) 60 s cap on the *same* requests that had succeeded minutes earlier in
+5–22 s — provider capacity, not a config mistake. Worth recording because it
+made evidence runs non-deterministic: the noise-photo case passed cleanly twice
+(semantic check fired on a real `[illegible]` reply) and failed upstream twice
+(503/timeout). The invariant held either way — a noise photo is never DONE —
+and the evidence script was adjusted to assert that invariant while reporting
+which path fired, instead of insisting on the message path. Also fixed while in
+here: signin/signup/verify redirected to a `/dashboard` that doesn't exist
+(now `/upload`), `/` redirects to `/upload`, and the `/dashboard` entry was
+removed from `proxy.ts`.
+
+### 7. The 30s Gemini timeout was too tight for real photo latency (2026-09-17)
+A real upload failed with "Gemini extraction timed out after 30000ms". Probing
+the exact same stored photo through the same request path showed the call
+succeeds in **20.6s** and the R2 read adds ~2s on top — while the two earlier
+DONE jobs had finished in ~6s. Latency for one vision call therefore swings
+6s → 21s → past 30s, and the old cap failed a legitimate slow run.
+
+**Chosen:** `aiConfig.gemini.timeoutMs` 30_000 → 60_000 (config only, never a
+handler-side value), justifying the change at the point of definition.
+
+**Chosen against:** adding a retry-on-timeout. It would double the cost of every
+slow-but-successful call, and the SDK has no abort signal so the orphaned first
+attempt keeps billing in the background either way (see the `withTimeout` note
+in `lib/ai/extract.ts`). A background job can afford to wait 60s for a
+correct answer; it cannot afford to double-spend. If Gemini latency keeps
+climbing past 60s, that is a provider-capacity problem worth flagging, not a
+timeout knob worth turning again.
