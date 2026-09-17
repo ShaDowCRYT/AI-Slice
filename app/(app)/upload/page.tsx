@@ -90,9 +90,26 @@ export default function UploadPage() {
           className="mt-2 block w-full cursor-pointer rounded-md border border-input bg-background text-sm file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-2 file:text-primary-foreground"
         />
         <p className="mt-2 text-xs text-muted-foreground">
-          Accepted: JPEG, PNG, WebP. Max {MAX_UPLOAD_BYTES / (1024 * 1024)} MB per
-          file. {files.length > 0 && `${files.length} file${files.length === 1 ? "" : "s"} selected.`}
+          Accepted: JPEG, PNG, WebP. Max {MAX_UPLOAD_BYTES / (1024 * 1024)} MB per file.
         </p>
+
+        {files.length > 0 && (
+          <ul aria-label="Selected photos" aria-live="polite" className="mt-3 space-y-1.5">
+            {files.map((file) => (
+              <li
+                key={`${file.name}-${file.lastModified}`}
+                className="flex items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm"
+              >
+                <span className="min-w-0 flex-1 truncate font-medium" title={file.name}>
+                  {file.name}
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {(file.size / (1024 * 1024)).toFixed(2)} MB
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
 
         {errors.length > 0 && (
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-destructive" aria-live="polite">
