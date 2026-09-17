@@ -210,7 +210,8 @@ export const ILLEGIBLE_ONLY_MESSAGE =
 
 const ILLEGIBLE_MARKER_RE = /\[illegible\]/gi;
 
-function hasRealContent(result: ExtractionResult): boolean {
+/** True if any meaningful field survives after stripping all [illegible] markers. */
+export function hasRealContent(result: ExtractionResult): boolean {
   const hasRealText = (s: string) =>
     s.replace(ILLEGIBLE_MARKER_RE, "").trim().length > 0;
 
